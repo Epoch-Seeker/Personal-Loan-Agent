@@ -1,8 +1,18 @@
 # agents.py
+import os
 import math
 from mock_data import get_customer_by_phone
 
 # --- HELPER FUNCTIONS (Mocking External APIs) ---
+
+def check_salary_slip_exists(phone):
+    """
+    Checks if a file named '{phone}_salary_slip.pdf' exists in the uploads folder.
+    """
+    expected_filename = f"uploads/{phone}_salary_slip.pdf"
+    if os.path.exists(expected_filename):
+        return True
+    return False
 
 def fetch_credit_score(phone):
     """Simulates fetching from a Credit Bureau API"""

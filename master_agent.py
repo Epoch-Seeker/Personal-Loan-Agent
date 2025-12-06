@@ -1,3 +1,4 @@
+import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import tool
 from langchain.agents import AgentExecutor, create_tool_calling_agent
@@ -8,8 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import your worker logic
-from agents import verification_agent, underwriting_agent
- 
+from agents import verification_agent, underwriting_agent, check_salary_slip_exists
+from pdf_generator import create_sanction_letter
 
 
 @tool
@@ -21,24 +22,41 @@ def verify_customer_tool(phone_number: str):
     return verification_agent(phone_number)
 
 @tool
-def underwriting_tool(phone_number: str, loan_amount: int, salary_slip_uploaded: bool = False):
+def underwriting_tool(phone_number: str, loan_amount: int):
     """
-    Call this tool to check if a loan can be approved.
-    Use this ONLY after the user has been verified.
-    Inputs:
-    - phone_number: The user's phone number.
-    - loan_amount: The amount they want to borrow.
-    - salary_slip_uploaded: Set to True ONLY if the user explicitly says they uploaded a file.
+    Call this to check loan eligibility.
+    If the amount is high, it AUTOMATICALLY checks if the salary slip 
+    has been uploaded to the server.
     """
-    return underwriting_agent(phone_number, loan_amount, salary_slip_uploaded=salary_slip_uploaded)
+    # 1. Check if slip exists on disk
+    is_slip_uploaded = check_salary_slip_exists(phone_number)
+    
+    # 2. Call the logic
+    return underwriting_agent(phone_number, loan_amount, salary_slip_uploaded=is_slip_uploaded)
 
 @tool
-def generate_sanction_letter_tool(name: str, amount: int):
+def generate_sanction_letter_tool(phone: str, amount: int):
     """
-    Call this tool ONLY if the loan status is 'APPROVED'.
-    It generates the final PDF link.
+    Generates a REAL PDF sanction letter.
+    Call this ONLY if the loan status is APPROVED.
+    Input: Phone number and Amount.
     """
-    return f"SUCCESS: Sanction Letter generated for {name} for amount Rs. {amount}. Link: http://tata-capital/download/{name}_loan.pdf"
+    # We need to fetch the name and EMI again or pass it. 
+    # For simplicity, let's fetch basic details
+    from mock_data import get_customer_by_phone
+    from agents import calculate_emi
+    
+    user = get_customer_by_phone(phone)
+    if not user: return "Error: User not found"
+    
+    emi = calculate_emi(amount, 14, 12) # Assuming 12 months default
+    
+    # Generate the actual PDF file
+    pdf_path = create_sanction_letter(user['name'], phone, amount, emi, 12)
+    
+    # Return the clickable URL (Assuming local server)
+    filename = os.path.basename(pdf_path)
+    return f"SUCCESS: Loan Sanctioned! Download Letter here: http://127.0.0.1:8000/pdfs/{filename}"
 
 tools = [verify_customer_tool, underwriting_tool, generate_sanction_letter_tool]
 

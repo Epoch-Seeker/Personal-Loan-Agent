@@ -1,62 +1,73 @@
-from fastapi import FastAPI, HTTPException
+# api.py
+import os
+import shutil
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage, AIMessage
 
-# Import the agent executor we built in Phase 3
-# Ensure your master_agent.py file is in the same folder
+# Import Agent and Database
 from master_agent import agent_executor
+from pdf_generator import create_sanction_letter
+import database
 
 app = FastAPI(title="Tata Capital Agent API")
 
-# --- IN-MEMORY SESSION STORAGE ---
-# In a real production app, use Redis or a Database.
-# For this hackathon, a dictionary is fine.
-# Format: { "session_id": [ message_history ] }
-chat_sessions = {}
+# --- FIX: CREATE FOLDERS IMMEDIATELY ---
+# These must exist BEFORE app.mount is called
+os.makedirs("uploads", exist_ok=True)
+os.makedirs("static_pdfs", exist_ok=True)
 
-# --- REQUEST MODEL ---
+# --- MOUNT FOLDERS ---
+app.mount("/pdfs", StaticFiles(directory="static_pdfs"), name="pdfs")
+
+# --- DATABASE SETUP ---
+@app.on_event("startup")
+def startup_event():
+    database.init_db()
+
+# --- MODELS ---
 class ChatRequest(BaseModel):
-    session_id: str  # A unique ID for the user (e.g., "user1")
-    message: str     # The text they typed
+    session_id: str
+    message: str
 
+# --- ENDPOINTS ---
 @app.get("/")
 def home():
-    return {"status": "Active", "message": "Tata Capital Agent Backend is running."}
+    return {"status": "Online", "storage": "SQLite Database"}
 
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
     session_id = request.session_id
     user_input = request.message
     
-    # 1. Retrieve or Initialize Chat History
-    if session_id not in chat_sessions:
-        chat_sessions[session_id] = []
-    
-    history = chat_sessions[session_id]
-    
-    # 2. Run the Agent Logic
     try:
-        print(f"Processing message for {session_id}: {user_input}")
+        # Load History
+        history = database.get_chat_history(session_id)
         
-        # We pass the existing history to the agent
+        # Run Agent
         response = agent_executor.invoke({
             "input": user_input,
             "chat_history": history
         })
-        
         bot_response = response['output']
         
-        # 3. Update History
-        history.append(HumanMessage(content=user_input))
-        history.append(AIMessage(content=bot_response))
+        # Save History
+        database.save_message(session_id, "human", user_input)
+        database.save_message(session_id, "ai", bot_response)
         
-        return {
-            "response": bot_response,
-            "session_id": session_id
-        }
+        return {"response": bot_response}
         
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Run this using: uvicorn api:app --reload
+@app.post("/upload")
+async def upload_file(phone: str, file: UploadFile = File(...)):
+    try:
+        file_location = f"uploads/{phone}_salary_slip.pdf"
+        with open(file_location, "wb+") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        return {"status": "success", "message": "File uploaded successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
