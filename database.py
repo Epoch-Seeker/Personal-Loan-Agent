@@ -4,6 +4,17 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 DB_NAME = "chat_history.db"
 
+
+def reset_session(session_id: str):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    # adjust table/column names to match your schema; example assumes table chat_messages(session_id, role, content)
+    try:
+        cur.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
 def init_db():
     """Creates the table if it doesn't exist."""
     conn = sqlite3.connect(DB_NAME)

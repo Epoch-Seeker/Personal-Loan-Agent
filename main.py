@@ -35,31 +35,34 @@ class ChatRequest(BaseModel):
 def home():
     return {"status": "Online", "storage": "SQLite Database"}
 
+# main.py (only the chat endpoint change)
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
     session_id = request.session_id
     user_input = request.message
-    
+
     try:
         # Load History
         history = database.get_chat_history(session_id)
-        
-        # Run Agent
+
+        # Run Agent — pass session_id so executor can implement resume/start-new logic
         response = agent_executor.invoke({
             "input": user_input,
-            "chat_history": history
+            "chat_history": history,
+            "session_id": session_id
         })
         bot_response = response['output']
-        
+
         # Save History
         database.save_message(session_id, "human", user_input)
         database.save_message(session_id, "ai", bot_response)
-        
+
         return {"response": bot_response}
-        
+
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/upload")
 async def upload_file(phone: str, file: UploadFile = File(...)):
