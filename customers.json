@@ -1,0 +1,58 @@
+[
+  {
+    "phone": "9999999991",
+    "name": "Amit Sharma",
+    "city": "Mumbai",
+    "existing_emi": 10000,
+    "credit_score": 750,
+    "pre_approved_limit": 500000
+  },
+  {
+    "phone": "9999999993",
+    "name": "Sunny",
+    "city": "Pune",
+    "existing_emi": 12000,
+    "credit_score": 780,
+    "pre_approved_limit": 500000
+  },
+  {
+    "phone": "9512457823",
+    "name": "Rishit Dutta",
+    "city": "Roulkela",
+    "existing_emi": 7151,
+    "credit_score": 690,
+    "pre_approved_limit": 480000
+  },
+  {
+    "phone": "1245125451",
+    "name": "chirag rana",
+    "city": "meerut",
+    "existing_emi": 0,
+    "credit_score": 750,
+    "pre_approved_limit": 1200000
+  },
+  {
+    "phone": "1214578451",
+    "name": "chirag Rana",
+    "city": "Meerut",
+    "credit_score": 808,
+    "pre_approved_limit": 400000,
+    "existing_emi": 964
+  },
+  {
+    "phone": "2356235623",
+    "name": "Hey",
+    "city": "delhi",
+    "credit_score": 740,
+    "pre_approved_limit": 500000,
+    "existing_emi": 4669
+  },
+  {
+    "phone": "1245122356",
+    "name": "Bharti",
+    "city": "solan",
+    "credit_score": 842,
+    "pre_approved_limit": 400000,
+    "existing_emi": 2083
+  }
+]
