@@ -589,8 +589,10 @@ def sales_node(state):
 
     if amt==0: return{"messages":[AIMessage(content="Enter loan amount (ex: 2 lakh, 50000)")],"step":"sales"}
 
-    emi=calculate_emi(amt, INTEREST_RATE, 12)
+    
     tenure = state.get('loan_tenure', 12)
+
+    emi=calculate_emi(amt, INTEREST_RATE, tenure)
     purpose = state.get('loan_purpose', '')
     
     # Add structured tag for frontend card rendering

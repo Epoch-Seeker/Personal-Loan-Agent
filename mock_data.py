@@ -2,6 +2,11 @@
 import json
 import os
 import random
+import pytesseract
+import pdfplumber 
+import cv2
+import os
+import re
 
 DATA_FILE = "customers.json"
 
@@ -124,17 +129,56 @@ CUSTOMERS = _load_customers_from_file()
 
 # --- SALARY SLIP SIMULATION --------------------------------------------------
 
-def extract_salary_from_slip(phone: str) -> int:
+def extract_salary_from_slip(file_path: str) -> int:
     """
-    Simulate extracting monthly salary from uploaded salary slip PDF.
-    In production, this would use OCR/Gemini to parse the actual PDF.
-    For hackathon: returns a random salary between ₹50,000 - ₹1,50,000.
+    Extract monthly salary from salary slip (PDF or Image).
+    Returns salary amount in INR.
+    Raises ValueError if salary not found.
     """
-    # Seed based on phone for consistent results per customer
-    random.seed(hash(phone) % (2**32))
-    salary = random.randint(50000, 150000)
-    random.seed()  # Reset seed
-    return salary
+
+    text = ""
+
+    # -------- STEP 1: Extract text --------
+    if file_path.lower().endswith(".pdf"):
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+
+    else:  # Image
+        image = cv2.imread(file_path)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)[1]
+        text = pytesseract.image_to_string(gray)
+
+    if not text.strip():
+        raise ValueError("Unable to read salary slip text")
+
+    text = text.lower().replace(",", "")
+
+    # -------- STEP 2: Salary keyword patterns --------
+    salary_patterns = [
+        r"net\s*salary\s*[:\-]?\s*₹?\s*(\d+)",
+        r"gross\s*salary\s*[:\-]?\s*₹?\s*(\d+)",
+        r"total\s*earnings\s*[:\-]?\s*₹?\s*(\d+)",
+        r"monthly\s*salary\s*[:\-]?\s*₹?\s*(\d+)",
+        r"salary\s*paid\s*[:\-]?\s*₹?\s*(\d+)",
+    ]
+
+    for pattern in salary_patterns:
+        match = re.search(pattern, text)
+        if match:
+            salary = int(match.group(1))
+            if salary >= 5000:  # sanity check
+                return salary
+
+    # -------- STEP 3: Fallback (largest amount heuristic) --------
+    numbers = [int(x) for x in re.findall(r"\b\d{4,7}\b", text)]
+    numbers = [n for n in numbers if 5000 <= n <= 500000]
+
+    if numbers:
+        return max(numbers)
+
+    raise ValueError("Salary not found in slip")
 
 
 # --- ADDRESS GENERATION FOR NEW CUSTOMERS ------------------------------------
