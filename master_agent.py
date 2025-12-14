@@ -1,5 +1,5 @@
 # ===============================================
-# master_agent.py  (Salary SYSTEM REMOVED)
+# master_agent.py  (Enhanced with KYC & Sales Logic)
 # ===============================================
 
 import os, re, json, operator
@@ -18,10 +18,11 @@ from agents import (
     fetch_general_offers,
     calculate_emi,
     parse_loan_amount,
-    check_salary_slip_exists
+    check_salary_slip_exists,
+    ANNUAL_INTEREST_RATE
 )
 from pdf_generator import create_sanction_letter
-from mock_data import get_customer_by_phone
+from mock_data import get_customer_by_phone, INTEREST_RATE
 
 # ----------------------------------------------------------
 # LLM
@@ -35,8 +36,10 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], operator.add]
     customer_phone: Optional[str]
     customer_name: Optional[str]
+    customer_address: Optional[str]  # Added for KYC
     loan_amount: int
     loan_tenure: int
+    loan_purpose: Optional[str]  # Added for needs analysis
     step: str
     offered_discount: bool
     final_decision: Optional[dict]
@@ -48,16 +51,50 @@ def get_history_string(messages, limit=50):
         s+=f"{role}: {m.content}\n"
     return s
 
+# ----------------------------------------------------------
+# Structured Response Helpers (for Frontend Card Rendering)
+# ----------------------------------------------------------
+
+def create_loan_offer_card(pre_approved_limit: int, interest_rate: float = 12, max_tenure: int = 60) -> str:
+    """Create structured tag for loan offer card."""
+    return f'[LOAN_OFFER]{{"preApprovedLimit":{pre_approved_limit},"interestRate":{interest_rate},"maxTenure":{max_tenure}}}[/LOAN_OFFER]'
+
+def create_loan_summary_card(amount: int, interest_rate: float, tenure: int, emi: float) -> str:
+    """Create structured tag for loan summary card."""
+    return f'[LOAN_SUMMARY]{{"amount":{amount},"interestRate":{interest_rate},"tenure":{tenure},"emi":{emi:.2f}}}[/LOAN_SUMMARY]'
+
+def create_approval_card(name: str, amount: int, emi: float, pdf_link: str) -> str:
+    """Create structured tag for approval card."""
+    import json
+    data = {"name": name, "amount": amount, "emi": f"{emi:.2f}", "pdfLink": pdf_link}
+    return f'[APPROVAL]{json.dumps(data)}[/APPROVAL]'
+
+def create_rejection_card(reason: str, credit_score: int = None) -> str:
+    """Create structured tag for rejection card."""
+    import json
+    data = {"reason": reason}
+    if credit_score:
+        data["creditScore"] = credit_score
+    return f'[REJECTION]{json.dumps(data)}[/REJECTION]'
+
 # add near other imports
-_LOAN_KEYWORDS = {"lakh", "lac", "loan", "rupee", "rupees", "k", "thousand", "amount", "emi"}
+_LOAN_KEYWORDS = {"lakh", "lac", "loan", "rupee", "rupees", "thousand", "amount", "emi", "borrow"}
 
 def _looks_like_amount_or_noise(text: str) -> bool:
-    t = text.lower()
+    """Check if text looks like a loan amount or monetary value."""
+    t = text.lower().strip()
+    
+    # Check for digits (amounts)
     if any(ch.isdigit() for ch in t):
         return True
+    
+    # Check for loan keywords - use word boundary matching to avoid false positives
+    # e.g., don't match 'k' in 'Kumar' or 'lac' in 'place'
     for kw in _LOAN_KEYWORDS:
-        if kw in t:
+        # Use word boundaries to match whole words only
+        if re.search(r'\b' + re.escape(kw) + r'\b', t):
             return True
+    
     return False
 
 def _is_probable_name(text: str) -> bool:
@@ -68,8 +105,8 @@ def _is_probable_name(text: str) -> bool:
     raw = text.strip()
     low = raw.lower()
 
-    # Reject greetings / commands / resume related words
-    bad_tokens = {"hi", "hii", "hey", "hello", "yo", "ok", "k", "resume", "start new"}
+    # Reject single-word greetings / commands
+    bad_tokens = {"hi", "hii", "hey", "hello", "yo", "ok", "resume", "start new", "restart", "cancel"}
     if low in bad_tokens:
         return False
 
@@ -81,13 +118,18 @@ def _is_probable_name(text: str) -> bool:
     if any(ch.isdigit() for ch in raw):
         return False
 
-    # Reject loan or money related input accidentally typed here
-    loan_keywords = {"loan", "emi", "amount", "borrow", "rs", "rupee", "₹", "salary", "limit"}
-    if any(kw in low for kw in loan_keywords):
-        return False
+    # Reject loan or money related input - use word boundary matching
+    loan_keywords = {"loan", "emi", "amount", "borrow", "rupee", "₹", "salary", "limit"}
+    for kw in loan_keywords:
+        if re.search(r'\b' + re.escape(kw) + r'\b', low):
+            return False
 
-    # Must contain alphabet characters only (spaces allowed)
-    if not re.fullmatch(r"[a-zA-Z\s]{2,60}", raw):
+    # Must contain alphabet characters only (spaces, dots, hyphens allowed for names)
+    if not re.fullmatch(r"[a-zA-Z\s.'-]{2,60}", raw):
+        return False
+    
+    # Must have at least one letter
+    if not any(ch.isalpha() for ch in raw):
         return False
 
     # If all checks passed => valid probable name
@@ -150,23 +192,22 @@ def master_node(state: AgentState):
     # -------- Offers (deterministic) --------
     if "offer" in msg and "letter" not in msg:
         offers = fetch_general_offers()
-        prompt = f"""You are the Master Agent. Short summary of CURRENT OFFERS only:
-CONVERSATION HISTORY:
-{history_context}
-
-OFFERS:
-{offers}
-
-Provide a short summary the user would understand, in one or two lines."""
-        response = llm.invoke(prompt)
-        text = getattr(response, "content", str(response))
-        return {"messages": [AIMessage(content=text)], "step": "greet"}
+        offers_text = "🎁 **Current Offers Available:**\n\n" + "\n\n".join(offers)
+        offers_text += "\n\n💼 Would you like to apply for a personal loan?"
+        return {"messages": [AIMessage(content=offers_text)], "step": "greet"}
 
     # -------- Phase: greet (deterministic intent checks) --------
     if step == "greet":
-        # phone typed directly -> verify
-        if any(char.isdigit() for char in msg) and len(re.sub(r"\D", "", msg)) >= 10:
-            return {"step": "verifying"}
+        # phone typed directly -> verify ONLY if exactly 10 digits
+        digits_only = re.sub(r"\D", "", msg)
+        if len(digits_only) >= 8:  # User is trying to enter a phone number
+            if len(digits_only) == 10:
+                return {"step": "verifying"}
+            else:
+                return {
+                    "messages": [AIMessage(content=f"I need a valid **10-digit phone number**. You entered {len(digits_only)} digits. Please enter your complete phone number.")],
+                    "step": "waiting_for_phone"
+                }
 
         # greeting small talk
         greetings = ["hi", "hello", "hey", "greetings"]
@@ -175,6 +216,22 @@ Provide a short summary the user would understand, in one or two lines."""
                 "messages": [AIMessage(content="Hello! Welcome to Tata Capital. I can help with personal loans — would you like to check offers or apply now?")],
                 "step": "greet"
             }
+
+        # Direct yes/affirmative after any previous message - check if it's loan intent
+        if msg.strip() in ["yes", "yeah", "yep", "sure", "ok", "okay", "yes please", "definitely"]:
+            # Check if previous message was about loan/offers
+            if len(state.get('messages', [])) > 0:
+                last_ai = None
+                for m in reversed(state['messages']):
+                    if isinstance(m, AIMessage):
+                        last_ai = (m.content or "").lower()
+                        break
+                
+                if last_ai and ("apply" in last_ai or "loan" in last_ai or "offer" in last_ai):
+                    return {
+                        "messages": [AIMessage(content="Great! Let's get started. Please enter your **10-digit phone number** to proceed.")],
+                        "step": "waiting_for_phone"
+                    }
 
         # loan intent with amount
         amount = parse_loan_amount(msg_raw)
@@ -185,10 +242,13 @@ Provide a short summary the user would understand, in one or two lines."""
                 "step": "waiting_for_phone"
             }
 
-        # simple loan intent without amount
-        if any(w in msg for w in ["apply", "want a loan", "need money", "start", "borrow"]):
+        # Expanded loan intent detection - including wedding, medical, etc.
+        loan_keywords = ["apply", "want a loan", "want loan", "need money", "need loan", 
+                        "start", "borrow", "give me loan", "i need", "personal loan",
+                        "wedding", "marriage", "medical", "education", "emergency"]
+        if any(w in msg for w in loan_keywords):
             return {
-                "messages": [AIMessage(content="Excellent — let's get started. Please enter your registered **Phone Number**.")],
+                "messages": [AIMessage(content="Excellent! Let's get started with your loan application. 💼\n\nPlease share your **10-digit phone number** to proceed.")],
                 "step": "waiting_for_phone"
             }
 
@@ -240,12 +300,18 @@ INSTRUCTIONS:
 
     # -------- waiting_for_phone helper --------
     if step == "waiting_for_phone":
-        if any(char.isdigit() for char in msg) and len(re.sub(r"\D", "", msg)) >= 10:
+        digits_only = re.sub(r"\D", "", msg)
+        if len(digits_only) == 10:
             return {"step": "verifying"}
+        elif len(digits_only) > 0:
+            return {
+                "messages": [AIMessage(content=f"I need exactly **10 digits**. You entered {len(digits_only)} digit{'s' if len(digits_only) != 1 else ''}. Please enter your complete phone number.")],
+                "step": "waiting_for_phone"
+            }
         return {"messages": [AIMessage(content="Please provide a valid 10-digit phone number.")], "step": "waiting_for_phone"}
 
     # treat worker-steps as nodes (no fallback LLM)
-    if step in ['verifying', 'get_name', 'get_city', 'sales', 'confirm_deal', 'underwriting']:
+    if step in ['verifying', 'get_name', 'get_city', 'get_loan_purpose', 'sales', 'confirm_deal', 'underwriting']:
         return {"step": step}
 
     # -------- LLM fallback controller (rare) --------
@@ -375,16 +441,56 @@ Return ONLY valid JSON.
         return {"messages": [AIMessage(content=str(raw_text))], "step": "greet"}
 
 # ==========================================================
-# ===============  WORKER NODES (salary removed) ===========
+# ===============  WORKER NODES (Enhanced with KYC) ========
 # ==========================================================
 
 def verification_node(state:AgentState):
-    phone=re.findall(r"\d{10}",state['messages'][-1].content)[0]
+    # Extract exactly 10 digits
+    phone_match = re.findall(r"\d{10}", state['messages'][-1].content)
+    if not phone_match:
+        # Fallback: extract all digits and validate
+        digits = re.sub(r"\D", "", state['messages'][-1].content)
+        if len(digits) != 10:
+            return {
+                "messages": [AIMessage(content=f"I need exactly 10 digits for your phone number. You provided {len(digits)}. Please enter a valid 10-digit phone number.")],
+                "step": "waiting_for_phone"
+            }
+        phone = digits
+    else:
+        phone = phone_match[0]
+    
     r=verification_agent(phone)
 
     if r["status"]=="VERIFIED":
-        msg=f"✅ Verified {r['name']}.\nPre-approved limit: ₹{r['limit']}\n\nLoan amount?"
-        return{"messages":[AIMessage(content=msg)],"customer_phone":phone,"customer_name":r['name'],"step":"sales"}
+        # Include address verification for KYC compliance
+        address = r.get('address', 'Address not on file')
+        
+        # Add structured tag for frontend card rendering
+        loan_offer_tag = create_loan_offer_card(
+            pre_approved_limit=r['limit'],
+            interest_rate=INTEREST_RATE,
+            max_tenure=60
+        )
+        
+        msg = (
+            f"{loan_offer_tag}\n"
+            f"✅ **KYC Verification Successful!**\n\n"
+            f"👤 **Name:** {r['name']}\n"
+            f"📍 **Address on file:** {address}\n"
+            f"💳 **Credit Score:** {r.get('credit_score', 'N/A')}\n"
+            f"🏦 **Pre-approved Limit:** ₹{r['limit']:,}\n\n"
+            f"Congratulations! You're pre-approved for a personal loan!\n\n"
+            f"Is your address correct? If yes, please tell me:\n"
+            f"1. **How much loan** do you need?\n"
+            f"2. **What is the purpose?** (e.g., Wedding, Medical, Travel, Home Renovation, Education)"
+        )
+        return {
+            "messages": [AIMessage(content=msg)],
+            "customer_phone": phone,
+            "customer_name": r['name'],
+            "customer_address": address,
+            "step": "get_loan_purpose"
+        }
 
     return{"messages":[AIMessage(content="You seem new. What is your **Full Name**?")],"customer_phone":phone,"step":"get_name"}
 
@@ -426,21 +532,12 @@ def registration_city_node(state):
     phone = state.get("customer_phone")
     name = state.get("customer_name")
 
-    # If name is missing in state, try to recover from history (best-effort)
-    if not name:
-        for i, m in enumerate(state.get("messages", [])):
-            txt = getattr(m, "content", "")
-            # find the human message immediately after "Full Name" prompt
-            if "full name" in txt.lower() and i + 1 < len(state["messages"]):
-                cand = state["messages"][i + 1].content.strip()
-                if _is_probable_name(cand):
-                    name = cand
-                    break
-
-    # If name is still missing -> ask for it explicitly (do NOT store city as name)
+    # If name is missing -> ask for it (DO NOT try to recover from history)
+    # The registration_name_node only sets customer_name when name is valid,
+    # so if it's missing here, the user never provided a valid name
     if not name:
         return {
-            "messages": [AIMessage(content="I think I missed your name. Please tell me your **Full Name** first.")],
+            "messages": [AIMessage(content="I need your name first. Please tell me your **Full Name** (e.g., Amit Sharma).")],
             "step": "get_name"
         }
 
@@ -457,19 +554,32 @@ def registration_city_node(state):
     # Create customer now that we have name & city (phone may be None)
     r = register_agent(phone, name, city)
 
+    # Add structured tag for frontend card rendering
+    loan_offer_tag = create_loan_offer_card(
+        pre_approved_limit=r['limit'],
+        interest_rate=INTEREST_RATE,
+        max_tenure=60
+    )
+
     msg = (
-        f"🎉 Registration Complete!\n"
-        f"Welcome **{r['name']}** from **{r['city']}**.\n"
-        f"🏦 Pre-approved Limit: **₹{r['limit']}**\n\n"
-        f"Now tell me how much **loan amount** you want."
+        f"{loan_offer_tag}\n"
+        f"🎉 **Registration Complete!**\n\n"
+        f"👤 **Name:** {r['name']}\n"
+        f"📍 **Address:** {r['address']}\n"
+        f"🏦 **Pre-approved Limit:** ₹{r['limit']:,}\n"
+        f"💳 **Credit Score:** {r['credit_score']}\n\n"
+        f"Congratulations! You're pre-approved for a personal loan!\n\n"
+        f"Now, please tell me:\n"
+        f"1. **How much loan** do you need?\n"
+        f"2. **What is the purpose?** (e.g., Wedding, Medical, Travel, Home Renovation, Education)"
     )
 
     return {
         "messages": [AIMessage(content=msg)],
         "customer_phone": phone,
         "customer_name": r["name"],
-        "customer_city": r["city"],
-        "step": "sales"
+        "customer_address": r["address"],
+        "step": "get_loan_purpose"
     }
 
 
@@ -479,9 +589,34 @@ def sales_node(state):
 
     if amt==0: return{"messages":[AIMessage(content="Enter loan amount (ex: 2 lakh, 50000)")],"step":"sales"}
 
-    emi=calculate_emi(amt,14,12)
+    emi=calculate_emi(amt, INTEREST_RATE, 12)
+    tenure = state.get('loan_tenure', 12)
+    purpose = state.get('loan_purpose', '')
+    
+    # Add structured tag for frontend card rendering
+    loan_summary_tag = create_loan_summary_card(
+        amount=amt,
+        interest_rate=INTEREST_RATE,
+        tenure=tenure,
+        emi=emi
+    )
+    
+    # Personalized message based on loan purpose
+    purpose_msg = ""
+    if purpose:
+        purpose_msg = f"\n💡 For your **{purpose}** needs, this is a great choice!"
+    
     return{
-        "messages":[AIMessage(content=f"💰 Loan Summary\nAmount:₹{amt}\nEMI≈₹{emi}\nProceed? (yes/no)")],
+        "messages":[AIMessage(content=(
+            f"{loan_summary_tag}\n"
+            f"💰 **Loan Summary**\n\n"
+            f"📊 **Amount:** ₹{amt:,}\n"
+            f"📈 **Interest Rate:** {INTEREST_RATE}% p.a.\n"
+            f"📅 **Tenure:** {tenure} months\n"
+            f"💵 **Est. EMI:** ₹{emi:,.2f}/month"
+            f"{purpose_msg}\n\n"
+            f"✅ Ready to proceed? (yes/no)"
+        ))],
         "loan_amount":amt,"step":"confirm_deal"
     }
 
@@ -497,6 +632,24 @@ def underwriting_node(state: AgentState):
     phone = state["customer_phone"]
     amt = state["loan_amount"]
     tenure = state.get("loan_tenure", 12)
+
+    # 0️⃣ Safety check: If amount is missing, ask for it
+    if not amt or amt <= 0:
+        return {
+            "messages": [
+                AIMessage(
+                    content="I need to know the **loan amount** you require before I can process your application. How much do you need?"
+                )
+            ],
+            "step": "sales"  # Redirect to sales to capture amount
+        }
+
+    # 0.5️⃣ Safety check: If phone is missing (rare state loss), ask for it
+    if not phone:
+        return {
+            "messages": [AIMessage(content="Could you please confirm your **10-digit phone number** again?")],
+            "step": "waiting_for_phone"
+        }
 
     # last user message text (for "uploaded" etc.)
     last_msg = ""
@@ -541,6 +694,8 @@ def underwriting_node(state: AgentState):
         else:
             customer_name = "Customer"
 
+    # 2️⃣ Approved – generate sanction letter here
+    if status == "APPROVED":
         pdf_path = create_sanction_letter(
             customer_name,
             phone,
@@ -549,16 +704,22 @@ def underwriting_node(state: AgentState):
             tenure,
         )
 
-    # 2️⃣ Approved – generate sanction letter here
-    if status == "APPROVED":
-
         link = f"http://127.0.0.1:8000/pdfs/{os.path.basename(pdf_path)}"
+        
+        # Add structured tag for frontend card rendering
+        approval_tag = create_approval_card(
+            name=customer_name,
+            amount=amt,
+            emi=decision['new_emi'],
+            pdf_link=link
+        )
 
         msg = (
+            f"{approval_tag}\n"
             f"🎉 **Loan Approved!**\n\n"
             f"✅ **Name:** {customer_name}\n"
-            f"✅ **Loan Amount:** ₹{amt}\n"
-            f"✅ **Final EMI:** ₹{decision['new_emi']}\n\n"
+            f"✅ **Loan Amount:** ₹{amt:,}\n"
+            f"✅ **Final EMI:** ₹{decision['new_emi']:,.2f}\n\n"
             f"📄 [Click here to download your Sanction Letter]({link})"
         )
 
@@ -568,29 +729,161 @@ def underwriting_node(state: AgentState):
             "step": "done",
         }
 
-    # 3️⃣ Soft reject – fallback offer, go back to sales
+    # 3️⃣ Soft reject – fallback offer with PERSUASIVE sales pitch
     if status == "SOFT_REJECT":
         fallback = decision.get("fallback_offer", 0)
+        persuasion = decision.get("persuasion", "")
+        fallback_emi = calculate_emi(fallback, INTEREST_RATE, tenure)
+        
+        # Add structured tag for frontend card rendering
+        loan_summary_tag = create_loan_summary_card(
+            amount=fallback,
+            interest_rate=INTEREST_RATE,
+            tenure=tenure,
+            emi=fallback_emi
+        )
+        
         msg = (
-            f"Sorry, we can’t approve ₹{amt} right now.\n"
-            f"However, we can instantly approve **₹{fallback}**.\n"
-            f"Would you like to proceed with this amount?"
+            f"{loan_summary_tag}\n"
+            f"I understand you were looking for ₹{amt:,}, but let me share some good news! 🌟\n\n"
+            f"{persuasion}\n\n"
+            f"📊 **Alternative Offer:**\n"
+            f"💰 **Amount:** ₹{fallback:,}\n"
+            f"💵 **EMI:** ₹{fallback_emi:,.2f}/month\n"
+            f"📈 **Interest:** {INTEREST_RATE}% p.a.\n\n"
+            f"This keeps your finances healthy while meeting your needs. "
+            f"Would you like to proceed with ₹{fallback:,}? (yes/no)"
         )
         return {
             "messages": [AIMessage(content=msg)],
             "final_decision": decision,
-            "step": "sales",
+            "loan_amount": fallback,  # Update to fallback amount
+            "step": "confirm_deal",  # Go to confirmation, not sales
         }
 
     # 4️⃣ Hard reject – show reason and finish
     reason = decision.get("reason", "Not specified")
-    msg = f"❌ Application Rejected. Reason: {reason}"
+    
+    # Add structured tag for frontend card rendering
+    user = get_customer_by_phone(phone)
+    credit_score = user.get('credit_score') if user else None
+    rejection_tag = create_rejection_card(reason=reason, credit_score=credit_score)
+    
+    msg = f"{rejection_tag}\n❌ **Application Rejected**\n\nReason: {reason}"
     return {
         "messages": [AIMessage(content=msg)],
         "final_decision": decision,
         "step": "done",
     }
 
+
+# ==========================================================
+# ===============  LOAN PURPOSE NODE (Needs Analysis) ======
+# ==========================================================
+
+VALID_PURPOSES = {
+    "wedding", "marriage", "medical", "health", "hospital", "treatment",
+    "travel", "vacation", "holiday", "trip", "education", "study", "college",
+    "home", "renovation", "repair", "house", "furniture", "appliance",
+    "business", "startup", "investment", "car", "vehicle", "bike",
+    "debt", "consolidation", "emergency", "personal", "other"
+}
+
+def _extract_purpose(text: str) -> str:
+    """Extract loan purpose from user message."""
+    text_lower = text.lower()
+    for purpose in VALID_PURPOSES:
+        if purpose in text_lower:
+            # Return a clean version
+            purpose_map = {
+                "wedding": "Wedding", "marriage": "Wedding",
+                "medical": "Medical Expenses", "health": "Medical Expenses", 
+                "hospital": "Medical Expenses", "treatment": "Medical Expenses",
+                "travel": "Travel", "vacation": "Travel", "holiday": "Travel", "trip": "Travel",
+                "education": "Education", "study": "Education", "college": "Education",
+                "home": "Home Improvement", "renovation": "Home Improvement", 
+                "repair": "Home Improvement", "house": "Home Improvement",
+                "furniture": "Home Improvement", "appliance": "Home Improvement",
+                "business": "Business", "startup": "Business", "investment": "Business",
+                "car": "Vehicle Purchase", "vehicle": "Vehicle Purchase", "bike": "Vehicle Purchase",
+                "debt": "Debt Consolidation", "consolidation": "Debt Consolidation",
+                "emergency": "Emergency", "personal": "Personal", "other": "Personal"
+            }
+            return purpose_map.get(purpose, purpose.title())
+    return ""
+
+
+def loan_purpose_node(state: AgentState):
+    """
+    Capture loan amount and purpose together for needs analysis.
+    Makes the conversation more human-like by understanding WHY the customer needs the loan.
+    """
+    msg = state['messages'][-1].content
+    
+    # Try to extract both amount and purpose
+    amt = parse_loan_amount(msg)
+    purpose = _extract_purpose(msg)
+    
+    # If we got amount but no purpose, ask for purpose
+    if amt > 0 and not purpose:
+        return {
+            "messages": [AIMessage(content=(
+                f"Got it! You need **₹{amt:,}**. 💰\n\n"
+                f"To help you better, what do you need this loan for?\n"
+                f"(e.g., Wedding, Medical, Travel, Home Renovation, Education, Business)"
+            ))],
+            "loan_amount": amt,
+            "step": "get_loan_purpose"
+        }
+    
+    # If we got purpose but no amount, ask for amount
+    if purpose and amt == 0:
+        return {
+            "messages": [AIMessage(content=(
+                f"I see you need funds for **{purpose}**! That's a great reason. 🎯\n\n"
+                f"How much loan amount do you need?"
+            ))],
+            "loan_purpose": purpose,
+            "step": "get_loan_purpose"
+        }
+    
+    # If we have both, proceed to sales with personalized message
+    if amt > 0 and purpose:
+        emi = calculate_emi(amt, INTEREST_RATE, 12)
+        
+        # Add structured tag for frontend card rendering
+        loan_summary_tag = create_loan_summary_card(
+            amount=amt,
+            interest_rate=INTEREST_RATE,
+            tenure=12,
+            emi=emi
+        )
+        
+        return {
+            "messages": [AIMessage(content=(
+                f"{loan_summary_tag}\n"
+                f"Perfect! For your **{purpose}** needs, here's what I can offer:\n\n"
+                f"💰 **Loan Summary**\n"
+                f"📊 **Amount:** ₹{amt:,}\n"
+                f"📈 **Interest Rate:** {INTEREST_RATE}% p.a.\n"
+                f"📅 **Tenure:** 12 months\n"
+                f"💵 **Est. EMI:** ₹{emi:,.2f}/month\n\n"
+                f"✅ Ready to proceed? (yes/no)"
+            ))],
+            "loan_amount": amt,
+            "loan_purpose": purpose,
+            "step": "confirm_deal"
+        }
+    
+    # Neither - ask for both
+    return {
+        "messages": [AIMessage(content=(
+            "Please share:\n"
+            "1. **Loan amount** you need (e.g., 2 lakh, 50000)\n"
+            "2. **Purpose** of the loan (e.g., Wedding, Medical, Travel)"
+        ))],
+        "step": "get_loan_purpose"
+    }
 
 
 # ==========================================================
@@ -602,6 +895,7 @@ workflow.add_node("router",master_node)
 workflow.add_node("verifier",verification_node)
 workflow.add_node("register_name",registration_name_node)
 workflow.add_node("register_city",registration_city_node)
+workflow.add_node("loan_purpose", loan_purpose_node)  # New node for needs analysis
 workflow.add_node("sales",sales_node)
 workflow.add_node("confirmer",confirmation_node)
 workflow.add_node("underwriter",underwriting_node)
@@ -618,6 +912,7 @@ workflow.add_conditional_edges(
         "verifying":"verifier",
         "get_name":"register_name",
         "get_city":"register_city",
+        "get_loan_purpose": "loan_purpose",  # New route for loan purpose
         "sales":"sales",
         "confirm_deal":"confirmer",
         "underwriting":"underwriter",
@@ -629,6 +924,7 @@ workflow.add_conditional_edges(
 workflow.add_edge("verifier", END)
 workflow.add_edge("register_name", END)
 workflow.add_edge("register_city", END)
+workflow.add_edge("loan_purpose", END)  # New edge
 workflow.add_edge("sales", END)
 workflow.add_edge("confirmer", "router")
 workflow.add_edge("underwriter", END)
@@ -684,8 +980,41 @@ class GraphExecutor:
                 last_ai_prompt = (m.content or "").lower()
                 last_ai_text = m.content or ""
 
-                # Loan summary → confirm_deal
-                if "loan summary" in last_ai_prompt or "est. emi" in last_ai_prompt:
+                # Check if loan was completed (sanction letter generated)
+                if ("sanction letter" in last_ai_prompt and "download" in last_ai_prompt) or \
+                   ("congratulations" in last_ai_prompt and "approved" in last_ai_prompt) or \
+                   "[approval]" in last_ai_prompt or \
+                   "application rejected" in last_ai_prompt or \
+                   "[rejection]" in last_ai_prompt:
+                    step = "done"
+
+                # Extract name from "Nice to meet you **{name}**" pattern
+                name_match = re.search(r"nice to meet you \*?\*?([^*\n😊]+)", last_ai_prompt)
+                if name_match:
+                    extracted_name = name_match.group(1).strip()
+                    if extracted_name and len(extracted_name) > 1:
+                        name = extracted_name
+                
+                # Also extract from registration complete messages
+                name_match2 = re.search(r"\*?\*?name:\*?\*?\s*([^\n*]+)", last_ai_prompt)
+                if name_match2:
+                    extracted_name = name_match2.group(1).strip()
+                    if extracted_name and len(extracted_name) > 1:
+                        name = extracted_name
+
+                # Check for structured tags first to extract amount reliably
+                summary_match = re.search(r"\[LOAN_SUMMARY\](.*?)\[/LOAN_SUMMARY\]", m.content, re.DOTALL)
+                if summary_match:
+                    step = "confirm_deal"
+                    try:
+                        data = json.loads(summary_match.group(1))
+                        if "amount" in data:
+                            amt = int(data["amount"])
+                    except:
+                        pass
+                
+                # Fallback to text regex if no tag or tag parsing failed
+                elif "loan summary" in last_ai_prompt or "est. emi" in last_ai_prompt:
                     step = "confirm_deal"
                     m_amount = re.search(r"amount[:\*\s]*₹\s*([0-9,]+)", m.content, flags=re.IGNORECASE)
                     if m_amount:
@@ -702,7 +1031,7 @@ class GraphExecutor:
                     step = "sales"
 
                 # Ask name / city → corresponding step
-                if "what is your full name" in last_ai_prompt or "full name" in last_ai_prompt:
+                if "what is your full name" in last_ai_prompt or "you seem new" in last_ai_prompt:
                     step = "get_name"
                 if "which city" in last_ai_prompt or "which city do you live" in last_ai_prompt:
                     step = "get_city"
@@ -712,6 +1041,11 @@ class GraphExecutor:
             if isinstance(m, HumanMessage):
                 txt = (m.content or "").strip()
                 txt_l = txt.lower()
+
+                # If last AI asked for name, capture this message as name
+                if last_ai_prompt and ("what is your full name" in last_ai_prompt or "you seem new" in last_ai_prompt or "full name" in last_ai_prompt):
+                    if _is_probable_name(txt):
+                        name = txt
 
                 # capture phone if user typed it anywhere
                 digits = re.findall(r"\d{10,}", txt)
@@ -742,8 +1076,11 @@ class GraphExecutor:
             if "loan summary" in full_lower or "est. emi" in full_lower:
                 step = "confirm_deal"
             elif ("verification successful" in full_lower or "verified " in full_lower
-                  or "registration successful" in full_lower or "registration complete" in full_lower):
-                step = "sales"
+                  or "registration successful" in full_lower or "registration complete" in full_lower
+                  or "kyc verification successful" in full_lower):
+                step = "get_loan_purpose"  # Go to loan purpose after verification
+            elif "what is the purpose" in full_lower or "what do you need this loan for" in full_lower:
+                step = "get_loan_purpose"
             elif "which city" in full_lower:
                 step = "get_city"
             elif "what is your full name" in full_lower or "full name" in full_lower:
@@ -767,6 +1104,24 @@ class GraphExecutor:
         # ---------------- RESUME / START-NEW LOGIC ----------------
         ui_lc = user_input.lower().strip()
 
+        # If loan was completed (step is done), reset to greet for new conversation
+        if step == "done":
+            # User wants to start a fresh conversation after loan completion
+            initial_state = {
+                "messages": [HumanMessage(content=user_input)],
+                "step": "greet",
+                "customer_phone": None,
+                "customer_name": None,
+                "loan_amount": 0,
+                "loan_tenure": input_dict.get("tenure", 12),
+                "offered_discount": False,
+                "final_decision": {}
+            }
+            result = app_graph.invoke(initial_state)
+            if not result.get('messages'):
+                return {"output": "System Error: No response generated."}
+            return {"output": result['messages'][-1].content}
+
         unfinished_steps = {
             "confirm_deal",
             "underwriting",
@@ -774,6 +1129,7 @@ class GraphExecutor:
             "waiting_for_phone",
             "get_name",
             "get_city",
+            "get_loan_purpose",  # Added for loan purpose flow
         }
         is_unfinished = step in unfinished_steps
 
