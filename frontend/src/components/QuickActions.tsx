@@ -15,6 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import HelpModal from "@/components/ui/HelpModal";
+import {
+  Dialog,
+  DialogContent,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+
 
 interface QuickActionsProps {
   onAction: (message: string) => void;
@@ -42,8 +49,7 @@ const actions = [
     icon: FileText,
     label: "Upload Documents",
     message: "I want to upload my salary slip",
-  },
-  { icon: HelpCircle, label: "Help", message: "What can you help me with?" },
+  }, 
 ];
 
 const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {
@@ -97,6 +103,7 @@ const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {
 
       {/* Quick Action Buttons */}
       <div className="grid grid-cols-3 gap-3">
+        {/* Existing chat-based actions */}
         {actions.map(({ icon: Icon, label, message }) => (
           <Button
             key={label}
@@ -109,7 +116,26 @@ const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {
             <span className="text-sm">{label}</span>
           </Button>
         ))}
+
+        {/* HELP BUTTON (Modal-based) */}
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button
+              variant="outline"
+              disabled={disabled}
+              className="flex h-auto flex-col gap-2 py-4"
+            >
+              <HelpCircle className="h-5 w-5" />
+              <span className="text-sm">Help</span>
+            </Button>
+          </DialogTrigger>
+
+          <DialogContent className="max-h-[80vh] overflow-y-auto">
+            <HelpModal />
+          </DialogContent>
+        </Dialog>
       </div>
+
 
       {/* Promotional Banner */}
       <div className="rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 p-4 text-white">

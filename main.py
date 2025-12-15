@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from help import router as help_router
 
 # Import Agent & DB
 from master_agent import agent_executor
@@ -58,23 +59,46 @@ def home():
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
     session_id = request.session_id
-    user_input = request.message
+    user_input = (request.message or "").strip()
 
     try:
         # Fetch past messages for that user-session
         history = database.get_chat_history(session_id)
 
-        # Run Agent (NO salary logic needed now)
+        # --- DEDUP CHECK: if identical to last human message, return last AI reply ---
+        last_human = None
+        last_ai = None
+        # history assumed to be list of dicts like {"role": "human"/"ai", "content": "..."}
+        for m in reversed(history):
+            role = m.get("role") if isinstance(m, dict) else None
+            content = m.get("content") if isinstance(m, dict) else getattr(m, "content", None)
+            if not last_human and role == "human" and content is not None:
+                last_human = content.strip()
+            if not last_ai and role == "ai" and content is not None:
+                last_ai = content
+            if last_human and last_ai:
+                break
+
+        if last_human and user_input and last_human.lower() == user_input.lower():
+            # Duplicate user message — avoid re-processing.
+            # Return the last AI response (if any). Do NOT save duplicate human message.
+            if last_ai:
+                return {"response": last_ai}
+            else:
+                # No previous AI reply found — fall back to processing
+                pass
+
+        # Run Agent
         response = agent_executor.invoke({
             "input": user_input,
             "chat_history": history,
             "session_id": session_id,
             "tenure": request.tenure or 12
         })
-        
+
         bot_response = response['output']
 
-        # Save to DB
+        # Save to DB (only AFTER agent produced a response)
         database.save_message(session_id, "human", user_input)
         database.save_message(session_id, "ai", bot_response)
 
@@ -83,6 +107,7 @@ def chat_endpoint(request: ChatRequest):
     except Exception as e:
         print(f"[CHAT ERROR] {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # ==========================================================
@@ -103,4 +128,6 @@ async def upload_file(phone: str, file: UploadFile = File(...)):
     except Exception as e:
         print(f"[UPLOAD ERROR] {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+app.include_router(help_router)
 

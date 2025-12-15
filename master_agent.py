@@ -653,15 +653,15 @@ def underwriting_node(state: AgentState):
             "step": "waiting_for_phone"
         }
 
-    # last user message text (for "uploaded" etc.)
+    # last user message text (explicit "uploaded" only)
     last_msg = ""
     if state.get("messages"):
         last_msg = state["messages"][-1].content or ""
 
-    uploaded = (
-        check_salary_slip_exists(phone) or
-        any(p in last_msg.lower() for p in ["uploaded", "i uploaded", "file uploaded", "done upload"])
-    )
+    ui_text = last_msg.strip().lower()
+    uploaded = ui_text in {"uploaded", "i uploaded", "file uploaded", "done upload"}
+
+
 
     # Call core underwriting logic
     decision = underwriting_agent(
@@ -1088,9 +1088,12 @@ class GraphExecutor:
             elif "what is your full name" in full_lower or "full name" in full_lower:
                 step = "get_name"
 
-        # Underwriting override
-        if ("upload" in full_lower or "salary slip" in full_lower) and step != "confirm_deal":
+        if (
+            step == "underwriting"
+            and any(p in ui_lc for p in ["uploaded", "i uploaded", "file uploaded"])
+        ):
             step = "underwriting"
+
 
         # Extract phone from full history if still None
         if phone is None:
