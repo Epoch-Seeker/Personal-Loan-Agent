@@ -157,7 +157,6 @@ Create a `.env` file in the project root with the following keys:
 ```
 
 ## 12. Screenshots / Demo
-*(Placeholders for screenshots)*
 
 - **Login Interface:** ![Login UI](Screeenshots/login_interface.png)
 - **Home Interface:** ![Customer Home UI](Screeenshots/customer_home.png)
