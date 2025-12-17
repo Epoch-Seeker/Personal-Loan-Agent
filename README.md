@@ -160,10 +160,10 @@ Create a `.env` file in the project root with the following keys:
 *(Placeholders for screenshots)*
 
 - **Login Interface:** ![Login UI](Screeenshots/login_interface.png)
-- **Home Interface:** ![Customer Home UI](Screeenshots\customer_home.png)
-- **Chat Interface:** ![Chat UI](Screeenshots\chat.png)
-- **Loan Offer Card:** ![Loan Offer](Screeenshots\loan_offer_card.png)
-- **Sanction Letter:** ![Sanction Letter](Screeenshots\sanction_letter.png)
+- **Home Interface:** ![Customer Home UI](Screeenshots/customer_home.png)
+- **Chat Interface:** ![Chat UI](Screeenshots/chat.png)
+- **Loan Offer Card:** ![Loan Offer](Screeenshots/loan_offer_card.png)
+- **Sanction Letter:** ![Sanction Letter](Screeenshots/sanction_letter.png)
 
 ## 13. Future Improvements
 - **OCR Integration:** Use AWS Textract or Google Vision for real document scanning.
