@@ -11,8 +11,10 @@ interface SessionContextType {
   sessionId: string;
   phone: string;
   tenure: number;
+  purpose: string;
   setPhone: (phone: string) => void;
   setTenure: (tenure: number) => void;
+  setPurpose: (purpose: string) => void;
   resetSession: () => void;
   // Use phone as session ID when available (backend uses phone for session tracking)
   getEffectiveSessionId: () => string;
@@ -37,6 +39,10 @@ export const SessionProvider: React.FC<{ children: ReactNode }> = ({
     return stored ? parseInt(stored, 10) : 12;
   });
 
+  const [purpose, setPurposeState] = useState<string>(() => {
+    return localStorage.getItem("loan_purpose") || "";
+  });
+
   useEffect(() => {
     localStorage.setItem("loan_session_id", sessionId);
   }, [sessionId]);
@@ -49,6 +55,10 @@ export const SessionProvider: React.FC<{ children: ReactNode }> = ({
     localStorage.setItem("loan_tenure", tenure.toString());
   }, [tenure]);
 
+  useEffect(() => {
+    localStorage.setItem("loan_purpose", purpose);
+  }, [purpose]);
+
   const setPhone = (newPhone: string) => {
     setPhoneState(newPhone);
   };
@@ -57,18 +67,24 @@ export const SessionProvider: React.FC<{ children: ReactNode }> = ({
     setTenureState(newTenure);
   };
 
+  const setPurpose = (newPurpose: string) => {
+    setPurposeState(newPurpose);
+  };
+
   const resetSession = () => {
     const newSessionId = uuidv4();
     setSessionId(newSessionId);
     setPhoneState("");
+    setPurposeState("");
     localStorage.setItem("loan_session_id", newSessionId);
     localStorage.removeItem("loan_user_phone");
+    localStorage.removeItem("loan_purpose");
     localStorage.removeItem("loan_chat_messages");
   };
 
-  // Backend uses phone number as session identifier
+  // Backend uses phone number for underwriting, but we use UUID for chat history persistence
   const getEffectiveSessionId = () => {
-    return phone || sessionId;
+    return sessionId;
   };
 
   return (
@@ -77,8 +93,10 @@ export const SessionProvider: React.FC<{ children: ReactNode }> = ({
         sessionId,
         phone,
         tenure,
+        purpose,
         setPhone,
         setTenure,
+        setPurpose,
         resetSession,
         getEffectiveSessionId,
       }}

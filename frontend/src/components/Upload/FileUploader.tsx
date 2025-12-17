@@ -44,11 +44,21 @@ const FileUploader = ({ onUploadSuccess }: FileUploaderProps) => {
   );
   const [analysisProgress, setAnalysisProgress] = useState(0);
 
+  const clearSelectedFile = () => {
+    setFile(null);
+    setUploadStatus("idle");
+    setAnalysisResult(null);
+    setAnalysisProgress(0);
+  };
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
-      setFile(acceptedFiles[0]);
+      const selectedFile = acceptedFiles[0];
+      console.log("File selected:", selectedFile.name, selectedFile.size);
+      setFile(selectedFile);
       setUploadStatus("idle");
       setAnalysisResult(null);
+      setAnalysisProgress(0);
     }
   }, []);
 
@@ -60,6 +70,7 @@ const FileUploader = ({ onUploadSuccess }: FileUploaderProps) => {
     },
     maxFiles: 1,
     maxSize: 10 * 1024 * 1024, // 10MB
+    disabled: isUploading || isAnalyzing,
   });
 
   const simulateAnalysis = () => {
@@ -113,6 +124,10 @@ const FileUploader = ({ onUploadSuccess }: FileUploaderProps) => {
         toast.success(response.msg || "Salary slip uploaded successfully!");
         // Trigger callback to notify chat - user should say "uploaded"
         onUploadSuccess?.(result);
+        // Reset file after successful upload so user can upload again
+        setTimeout(() => {
+          clearSelectedFile();
+        }, 2000);
       } else {
         setUploadStatus("error");
         toast.error(response.msg || "Unable to upload salary slip");
@@ -181,23 +196,49 @@ const FileUploader = ({ onUploadSuccess }: FileUploaderProps) => {
       >
         <input {...getInputProps()} />
         {file ? (
-          <div className="flex items-center gap-3">
-            <FileText className="h-8 w-8 text-primary" />
-            <div>
-              <p className="font-medium text-foreground">{file.name}</p>
-              <p className="text-sm text-muted-foreground">
-                {(file.size / 1024 / 1024).toFixed(2)} MB
-              </p>
+          <div className="flex w-full flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <FileText className="h-8 w-8 text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-foreground">
+                  {file.name}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {file.size > 0
+                    ? (file.size / 1024 / 1024).toFixed(2)
+                    : "0.00"}{" "}
+                  MB
+                </p>
+              </div>
+              {uploadStatus === "success" && (
+                <CheckCircle className="h-6 w-6 text-green-500" />
+              )}
+              {uploadStatus === "partial" && (
+                <TrendingUp className="h-6 w-6 text-yellow-500" />
+              )}
+              {uploadStatus === "error" && (
+                <AlertCircle className="h-6 w-6 text-destructive" />
+              )}
             </div>
-            {uploadStatus === "success" && (
-              <CheckCircle className="h-6 w-6 text-green-500" />
-            )}
-            {uploadStatus === "partial" && (
-              <TrendingUp className="h-6 w-6 text-yellow-500" />
-            )}
-            {uploadStatus === "error" && (
-              <AlertCircle className="h-6 w-6 text-destructive" />
-            )}
+
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                Click the area to pick another file.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isUploading || isAnalyzing}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  clearSelectedFile();
+                }}
+              >
+                Change file
+              </Button>
+            </div>
           </div>
         ) : (
           <>

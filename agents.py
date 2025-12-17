@@ -15,7 +15,12 @@ def check_salary_slip_exists(phone: str) -> bool:
     """Check if salary slip PDF exists."""
     if not phone:
         return False
-    return os.path.exists(f"uploads/{phone}_salary_slip.pdf")
+    path = f"uploads/{phone}_salary_slip.pdf"
+    abs_path = os.path.abspath(path)
+    exists = os.path.exists(abs_path)
+    print(f"[DEBUG] check_salary_slip_exists: looking for {abs_path} -> {exists}")
+    return exists
+
 
 
 def fetch_general_offers():
@@ -91,7 +96,7 @@ def register_agent(phone, name, city, address=None):
 
 # ----------------------- UNDERWRITING -----------------------
 
-def underwriting_agent(phone, loan_amount, tenure_months=12, salary_slip_uploaded=False):
+def underwriting_agent(phone, loan_amount,monthly_salary, tenure_months=12):
     """
     Enhanced Underwriting Rules:
     ✔ If credit_score < 700 → HARD_REJECT
@@ -137,7 +142,7 @@ def underwriting_agent(phone, loan_amount, tenure_months=12, salary_slip_uploade
         }
 
     # 4. Over limit but within 2x → need salary slip
-    if not salary_slip_uploaded:
+    if monthly_salary == None:
         return {
             "status": "NEEDS_DOCS", 
             "reason": "Upload salary slip for income verification",
@@ -145,9 +150,8 @@ def underwriting_agent(phone, loan_amount, tenure_months=12, salary_slip_uploade
         }
 
     # 5. Salary slip uploaded → Apply EMI ≤ 50% of salary rule
-    extracted_salary = extract_salary_from_slip(phone)
     emi = calculate_emi(loan_amount, ANNUAL_INTEREST_RATE, tenure_months)
-    max_allowed_emi = extracted_salary * 0.5  # 50% of salary rule
+    max_allowed_emi = monthly_salary * 0.5  # 50% of salary rule
     
     if emi <= max_allowed_emi:
         # EMI is within 50% of salary → APPROVE
@@ -155,8 +159,8 @@ def underwriting_agent(phone, loan_amount, tenure_months=12, salary_slip_uploade
             "status": "APPROVED",
             "new_emi": emi,
             "interest_rate": ANNUAL_INTEREST_RATE,
-            "salary_verified": extracted_salary,
-            "details": f"Approved after income verification. Your salary of ₹{extracted_salary} supports this EMI."
+            "salary_verified": monthly_salary,
+            "details": f"Approved after income verification. Your salary of ₹{monthly_salary} supports this EMI."
         }
     else:
         # EMI exceeds 50% of salary → Calculate max affordable amount
@@ -174,8 +178,8 @@ def underwriting_agent(phone, loan_amount, tenure_months=12, salary_slip_uploade
         return {
             "status": "SOFT_REJECT",
             "fallback_offer": max_affordable_amount,
-            "reason": f"EMI (₹{emi}) exceeds 50% of your verified salary (₹{extracted_salary})",
-            "salary_verified": extracted_salary,
+            "reason": f"EMI (₹{emi}) exceeds 50% of your verified salary (₹{monthly_salary})",
+            "salary_verified": monthly_salary,
             "max_emi_allowed": max_allowed_emi,
-            "persuasion": f"Based on your salary of ₹{extracted_salary}, I can approve up to ₹{max_affordable_amount} to keep your EMI manageable at ₹{calculate_emi(max_affordable_amount, ANNUAL_INTEREST_RATE, tenure_months)}. This ensures comfortable repayment!"
+            "persuasion": f"Based on your salary of ₹{monthly_salary}, I can approve up to ₹{max_affordable_amount} to keep your EMI manageable at ₹{calculate_emi(max_affordable_amount, ANNUAL_INTEREST_RATE, tenure_months)}. This ensures comfortable repayment!"
         }

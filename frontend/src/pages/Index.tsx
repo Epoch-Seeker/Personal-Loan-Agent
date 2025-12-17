@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useSession } from "@/context/SessionContext";
 import { useChat } from "@/hooks/useChat";
 import { checkHealth } from "@/services/api";
@@ -6,17 +6,32 @@ import Header from "@/components/Layout/Header";
 import ChatWindow from "@/components/Chat/ChatWindow";
 import ChatInput from "@/components/Chat/ChatInput";
 import QuickActions from "@/components/QuickActions";
-import LoanSidebar from "@/components/Sidebar/LoanSidebar";
+import JourneySidebar from "@/components/Sidebar/JourneySidebar";
+import EMICalculatorDialog from "@/components/Chat/EMICalculatorDialog";
+import UploadDialog from "@/components/Upload/UploadDialog";
 import { Button } from "@/components/ui/button";
-import { PanelRightOpen, PanelRightClose, WifiOff, Wifi } from "lucide-react";
+import LandingView from "@/components/Landing/LandingView";
+import AdminLoginDialog from "@/components/Landing/AdminLoginDialog";
+import { PanelRightOpen, PanelRightClose, WifiOff } from "lucide-react";
 import { toast } from "sonner";
+import { deriveLoanJourney } from "@/lib/loanJourney";
+import type { ActionType } from "@/components/Chat/ActionButton";
 
 const Index = () => {
-  const { getEffectiveSessionId, tenure, resetSession, phone } = useSession();
+  const { getEffectiveSessionId, tenure, resetSession, phone, setPhone } = useSession();
   const sessionId = getEffectiveSessionId();
   const { messages, isLoading, send, clearMessages, sendSystemNotification } =
     useChat(sessionId, tenure);
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"calculator" | "upload">(
+    "calculator"
+  );
+  const [showLanding, setShowLanding] = useState(true);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [showEMICalculator, setShowEMICalculator] = useState(false);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPass, setAdminPass] = useState("");
   const [isServerOnline, setIsServerOnline] = useState<boolean | null>(null);
 
   // Check server health on mount
@@ -49,14 +64,72 @@ const Index = () => {
     send(message);
   };
 
-  // Handler for when salary slip is uploaded - notify the chat
-  const handleSalarySlipUploaded = () => {
-    if (phone) {
-      // Send "uploaded" message as per backend API docs
-      sendSystemNotification("uploaded");
-      toast.success("Salary slip uploaded! Processing...");
+  const handleQuickActionChip = (action: string) => {
+    switch (action) {
+      case "calculator":
+        setShowEMICalculator(true);
+        break;
+      case "options":
+        send("Show me all loan options");
+        break;
+      case "support":
+        send("I need help from support");
+        break;
     }
   };
+
+  // Handler for when salary slip is uploaded
+  const handleSalarySlipUploaded = () => {
+    // Just send the notification, toast already shown by dialog
+    if (phone) {
+      sendSystemNotification("uploaded");
+    }
+  };
+
+  // Handler for action buttons in chat messages
+  const handleChatAction = useCallback((action: ActionType) => {
+    switch (action) {
+      case "UPLOAD_SALARY_SLIP":
+        setShowUploadDialog(true);
+        break;
+      case "YES":
+        send("yes");
+        break;
+      case "NO":
+        send("no");
+        break;
+      case "SHOW_OPTIONS":
+        send("Show me all loan options");
+        break;
+      default:
+        console.log("Unknown action:", action);
+    }
+  }, [send]);
+
+  // Hide landing once the user starts interacting
+  useEffect(() => {
+    if (messages.length > 0) {
+      setShowLanding(false);
+    }
+  }, [messages.length]);
+
+  const journey = useMemo(() => deriveLoanJourney(messages), [messages]);
+
+  const [hasClosedUpload, setHasClosedUpload] = useState(false);
+
+  // Reset unique session requirement flag if needsUpload becomes false
+  useEffect(() => {
+    if (!journey.needsUpload) {
+      setHasClosedUpload(false);
+    }
+  }, [journey.needsUpload]);
+
+  // Auto-open upload dialog when upload is needed
+  useEffect(() => {
+    if (journey.needsUpload && !showUploadDialog && !hasClosedUpload) {
+      setShowUploadDialog(true);
+    }
+  }, [journey.needsUpload, showUploadDialog, hasClosedUpload]);
 
   // Dynamic placeholder based on conversation state
   const getPlaceholder = () => {
@@ -69,9 +142,48 @@ const Index = () => {
     return "Type your response...";
   };
 
+  // Auto-detect phone number from messages if not set
+  useEffect(() => {
+    if (!phone && messages.length > 0) {
+      const phoneMsg = [...messages]
+        .reverse()
+        .find(
+          (m) =>
+            m.role === "user" && /\b[6-9]\d{9}\b/.test(m.content)
+        );
+      
+      if (phoneMsg) {
+        const match = phoneMsg.content.match(/\b([6-9]\d{9})\b/);
+        if (match) {
+          setPhone(match[1]);
+        }
+      }
+    }
+  }, [messages, phone, setPhone]);
+
+  if (showLanding) {
+    return (
+      <div className="min-h-screen bg-background">
+        <LandingView
+          onGetStarted={() => setShowLanding(false)}
+          onAdmin={() => setShowAdminLogin(true)}
+          serverOnline={isServerOnline !== false}
+        />
+        <AdminLoginDialog
+          open={showAdminLogin}
+          onOpenChange={setShowAdminLogin}
+          email={adminEmail}
+          password={adminPass}
+          onEmailChange={setAdminEmail}
+          onPasswordChange={setAdminPass}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen flex-col bg-background">
-      <Header onReset={handleReset} />
+      <Header onReset={messages.length > 0 ? handleReset : undefined} />
 
       {/* Server Status Banner */}
       {isServerOnline === false && (
@@ -85,7 +197,7 @@ const Index = () => {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Main Chat Area */}
-        <div className="flex flex-1 flex-col">
+        <div className="relative flex flex-1 flex-col">
           {messages.length === 0 && (
             <QuickActions
               onAction={handleQuickAction}
@@ -93,25 +205,19 @@ const Index = () => {
             />
           )}
 
-          <ChatWindow messages={messages} isLoading={isLoading} />
+          <ChatWindow messages={messages} isLoading={isLoading} onAction={handleChatAction} />
 
-          <div className="relative">
-            {isServerOnline && (
-              <div className="absolute -top-6 left-4 flex items-center gap-1 text-xs text-green-600">
-                <Wifi className="h-3 w-3" />
-                <span>Connected</span>
-              </div>
-            )}
-            <ChatInput
-              onSend={send}
-              disabled={isLoading || isServerOnline === false}
-              placeholder={getPlaceholder()}
-              autoFocus={!isLoading && isServerOnline !== false}
-            />
-          </div>
+          <ChatInput
+            onSend={send}
+            disabled={isLoading || isServerOnline === false}
+            placeholder={getPlaceholder()}
+            autoFocus={!isLoading && isServerOnline !== false}
+            showQuickActions={messages.length > 0}
+            onQuickAction={handleQuickActionChip}
+          />
         </div>
 
-        {/* Sidebar Toggle for Mobile */}
+        {/* Sidebar Toggle - mobile only */}
         <Button
           variant="outline"
           size="icon"
@@ -125,15 +231,46 @@ const Index = () => {
           )}
         </Button>
 
-        {/* Sidebar */}
+        {/* Sidebar - always visible on desktop, overlay on mobile */}
         <div
-          className={`fixed inset-y-0 right-0 z-40 transform transition-transform duration-300 lg:relative lg:transform-none ${
-            showSidebar ? "translate-x-0" : "translate-x-full"
-          }`}
+          className={`
+            fixed inset-y-0 right-0 z-40 w-80 border-l border-border bg-card
+            transform transition-transform duration-300
+            lg:relative lg:transform-none lg:z-auto lg:w-80
+            ${
+              showSidebar
+                ? "translate-x-0"
+                : "translate-x-full lg:translate-x-0"
+            }
+          `}
         >
-          <LoanSidebar onSalarySlipUploaded={handleSalarySlipUploaded} />
+          <JourneySidebar
+            steps={journey.steps}
+            canDownloadSanction={journey.canDownloadSanction}
+            salarySlipUploaded={journey.steps.find(s => s.key === 'docs')?.status === 'done'}
+            onExit={() => setShowLanding(true)}
+            onSupport={() => send("I need help from support")}
+          />
         </div>
       </div>
+
+      {/* EMI Calculator Dialog */}
+      <EMICalculatorDialog
+        open={showEMICalculator}
+        onOpenChange={setShowEMICalculator}
+      />
+
+      {/* Upload Dialog */}
+      <UploadDialog
+        open={showUploadDialog}
+        onOpenChange={(open) => {
+          setShowUploadDialog(open);
+          if (!open) {
+            setHasClosedUpload(true);
+          }
+        }}
+        onUploadComplete={handleSalarySlipUploaded}
+      />
     </div>
   );
 };

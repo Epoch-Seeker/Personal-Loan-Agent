@@ -128,58 +128,135 @@ CUSTOMERS = _load_customers_from_file()
 
 
 # --- SALARY SLIP SIMULATION --------------------------------------------------
+# dependencies: pip install pymupdf pillow pytesseract opencv-python
+# On Windows: install Tesseract-OCR and set pytesseract.pytesseract.tesseract_cmd accordingly
 
-def extract_salary_from_slip(file_path: str) -> int:
+import os
+import re
+import fitz  # pymupdf
+import pytesseract
+from PIL import Image
+import io
+import numpy as np
+import cv2
+
+# If you installed Tesseract on Windows, set the path, e.g.
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+def _pdf_first_page_to_pil(pdf_path, zoom=2):
+    """Render first page of PDF to a PIL.Image (RGB)."""
+    doc = fitz.open(pdf_path)
+    if doc.page_count < 1:
+        doc.close()
+        raise RuntimeError("PDF has no pages")
+    page = doc.load_page(0)
+    mat = fitz.Matrix(zoom, zoom)  # zoom to increase resolution for OCR
+    pix = page.get_pixmap(matrix=mat, alpha=False)  # RGB
+    img_bytes = pix.tobytes("png")
+    doc.close()
+    return Image.open(io.BytesIO(img_bytes))
+
+def _pil_to_cv2(pil_img):
+    """Convert PIL.Image (RGB) to OpenCV BGR ndarray safely."""
+    if pil_img.mode != "RGB":
+        pil_img = pil_img.convert("RGB")
+    arr = np.array(pil_img)            # RGB
+    bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    return bgr
+
+def extract_salary_from_slip(phone: str) -> int:
     """
-    Extract monthly salary from salary slip (PDF or Image).
-    Returns salary amount in INR.
-    Raises ValueError if salary not found.
+    Extract monthly salary (int) from uploaded salary slip PDF or image.
+    Returns integer monthly salary if found, else 0.
     """
+    if not phone:
+        print("[ERROR] extract_salary_from_slip called without phone")
+        return 0
 
-    text = ""
+    uploads_dir = os.path.join("uploads")
+    pdf_path = os.path.abspath(os.path.join(uploads_dir, f"{phone}_salary_slip.pdf"))
+    img_path_jpg = os.path.abspath(os.path.join(uploads_dir, f"{phone}_salary_slip.jpg"))
+    img_path_png = os.path.abspath(os.path.join(uploads_dir, f"{phone}_salary_slip.png"))
 
-    # -------- STEP 1: Extract text --------
-    if file_path.lower().endswith(".pdf"):
-        with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                text += page.extract_text() or ""
+    # choose path: prefer pdf then jpg/png
+    if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+        source_type = "pdf"
+        source_path = pdf_path
+    elif os.path.exists(img_path_jpg) and os.path.getsize(img_path_jpg) > 0:
+        source_type = "image"
+        source_path = img_path_jpg
+    elif os.path.exists(img_path_png) and os.path.getsize(img_path_png) > 0:
+        source_type = "image"
+        source_path = img_path_png
+    else:
+        print(f"[ERROR] extract_salary_from_slip: no file found for phone={phone}. "
+              f"Checked: {pdf_path}, {img_path_jpg}, {img_path_png}")
+        return 0
 
-    else:  # Image
-        image = cv2.imread(file_path)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)[1]
-        text = pytesseract.image_to_string(gray)
+    print(f"[DEBUG] extract_salary_from_slip: using {source_type} at {source_path}")
 
-    if not text.strip():
-        raise ValueError("Unable to read salary slip text")
+    try:
+        if source_type == "pdf":
+            pil_img = _pdf_first_page_to_pil(source_path, zoom=2)
+            cv_img = _pil_to_cv2(pil_img)
+        else:
+            # image file: load with OpenCV (safer than imread direct on weird encodings)
+            # but check file size first
+            size = os.path.getsize(source_path)
+            if size == 0:
+                print(f"[ERROR] file {source_path} has zero size.")
+                return 0
+            # use pillow to ensure format support, then convert
+            pil_img = Image.open(source_path)
+            cv_img = _pil_to_cv2(pil_img)
 
-    text = text.lower().replace(",", "")
+        if cv_img is None or cv_img.size == 0:
+            print("[ERROR] image conversion failed; image empty")
+            return 0
 
-    # -------- STEP 2: Salary keyword patterns --------
-    salary_patterns = [
-        r"net\s*salary\s*[:\-]?\s*₹?\s*(\d+)",
-        r"gross\s*salary\s*[:\-]?\s*₹?\s*(\d+)",
-        r"total\s*earnings\s*[:\-]?\s*₹?\s*(\d+)",
-        r"monthly\s*salary\s*[:\-]?\s*₹?\s*(\d+)",
-        r"salary\s*paid\s*[:\-]?\s*₹?\s*(\d+)",
-    ]
+        # optional: preprocess for better OCR
+        gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+        # threshold to clean the background - tweak if needed
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    for pattern in salary_patterns:
-        match = re.search(pattern, text)
-        if match:
-            salary = int(match.group(1))
-            if salary >= 5000:  # sanity check
-                return salary
+        # OCR: use PIL image for pytesseract (convert back)
+        ocr_pil = Image.fromarray(cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB))
+        text = pytesseract.image_to_string(ocr_pil, lang="eng")
+        text_lower = text.lower()
+        print(f"[DEBUG] OCR text snippet: {text_lower[:200]}")
 
-    # -------- STEP 3: Fallback (largest amount heuristic) --------
-    numbers = [int(x) for x in re.findall(r"\b\d{4,7}\b", text)]
-    numbers = [n for n in numbers if 5000 <= n <= 500000]
+        # regex: look for monthly salary / numbers labelled monthly/per month
+        # Common patterns: "₹ 50,000", "50000 per month", "monthly salary 50,000"
+        patterns = [
+            r"(?:monthly salary|salary per month|salary|net in hand|in-hand)[^\d\n\r]{0,30}([\d,]{3,})",
+            r"([\d,]{3,})\s*(?:/month|per month|pm|monthly)",
+            r"₹\s*([\d,]+)"
+        ]
+        for p in patterns:
+            m = re.search(p, text_lower, flags=re.IGNORECASE)
+            if m:
+                num_s = m.group(1).replace(",", "")
+                try:
+                    val = int(re.sub(r"\D", "", num_s))
+                    print(f"[INFO] Extracted salary: {val}")
+                    return val
+                except:
+                    continue
 
-    if numbers:
-        return max(numbers)
+        # fallback: find largest 5+ digit number in the text (heuristic)
+        nums = re.findall(r"[\d,]{5,}", text_lower)
+        if nums:
+            nums_clean = [int(n.replace(",", "")) for n in nums]
+            val = max(nums_clean)
+            print(f"[INFO] Heuristic salary guess: {val}")
+            return val
 
-    raise ValueError("Salary not found in slip")
+        print("[WARN] No salary number found in OCR output.")
+        return 0
 
+    except Exception as e:
+        print(f"[ERROR] extract_salary_from_slip exception: {e}")
+        return 0
 
 # --- ADDRESS GENERATION FOR NEW CUSTOMERS ------------------------------------
 

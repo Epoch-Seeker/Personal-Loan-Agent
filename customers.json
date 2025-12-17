@@ -124,5 +124,14 @@
     "credit_score": 729,
     "pre_approved_limit": 300000,
     "existing_emi": 14448
+  },
+  {
+    "phone": "7207654097",
+    "name": "harshit datta",
+    "city": "Meerut",
+    "address": "Plot 189, Sector 15, Lake Marg, Meerut 273928",
+    "credit_score": 724,
+    "pre_approved_limit": 500000,
+    "existing_emi": 7621
   }
 ]

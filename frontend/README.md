@@ -1,73 +1,59 @@
-# Welcome to your Lovable project
+# LoanBuddy Frontend
 
-## Project info
+AI-assisted personal loan web app built with Vite, React, TypeScript, Tailwind, and shadcn/ui. Connects to the backend at `http://127.0.0.1:8000` for chat, salary slip upload, and sanction letter download.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Features
 
-## How can I edit this code?
+- Conversational loan assistant with structured cards for loan offers, eligibility, KYC, approvals, rejections, and summaries
+- Loan calculator sidebar with EMI breakdown and purpose selection
+- Salary slip upload (PDF/PNG/JPG), analyzed server-side; chat auto-notified with "uploaded"
+- Sanction letter download by phone number
+- Auto-focus chat input, dynamic placeholders, and local session persistence
 
-There are several ways of editing your application.
-
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+## Getting Started
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+git clone <repo-url>
+cd frontend
+npm install
+npm run dev    # starts Vite on http://localhost:5173 by default
 ```
 
-**Edit a file directly in GitHub**
+## Environment & Config
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+- Backend base URL is defined in `src/services/api.ts` (currently `http://127.0.0.1:8000`).
+- Phone number is the session identifier; tenure defaults to 12 months and can be changed in the UI.
 
-**Use GitHub Codespaces**
+## Available Scripts
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+- `npm run dev` – start the dev server
+- `npm run build` – production build
+- `npm run preview` – preview the production build
+- `npm run lint` – lint the codebase
 
-## What technologies are used for this project?
+## Backend Endpoints (expected)
 
-This project is built with:
+- `POST /chat` – chat messages (body: `{ session_id, message, tenure }`)
+- `POST /upload?phone=<number>` – salary slip upload (multipart file)
+- `GET /pdfs/{phone}_sanction.pdf` – download sanction letter
+- `GET /health` – health check (optional)
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## Structured Response Tags
 
-## How can I deploy this project?
+The assistant renders rich cards when messages contain tagged JSON blocks:
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+- `[LOAN_OFFER]{...}[/LOAN_OFFER]`
+- `[KYC_VERIFIED]{...}[/KYC_VERIFIED]`
+- `[ELIGIBILITY]{...}[/ELIGIBILITY]`
+- `[LOAN_SUMMARY]{...}[/LOAN_SUMMARY]`
+- `[APPROVAL]{...}[/APPROVAL]`
+- `[REJECTION]{...}[/REJECTION]`
 
-## Can I connect a custom domain to my Lovable project?
+## Notes
 
-Yes, you can!
+- Ensure the backend is running and reachable from the frontend origin.
+- For salary slip flow: upload a file in the sidebar, then type or trigger "uploaded" to process.
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## License
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Proprietary / Internal use only (update if a license is chosen).

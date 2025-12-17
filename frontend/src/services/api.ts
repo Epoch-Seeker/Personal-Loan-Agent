@@ -52,13 +52,13 @@ export const sendMessage = async (
 
 // Upload salary slip
 export const uploadSalarySlip = async (
-  phone: string,
+  sessionId: string,
   file: File
 ): Promise<UploadResponse> => {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await api.post(`/upload?phone=${phone}`, formData, {
+  const response = await api.post(`/upload?phone=${sessionId}`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return response.data;

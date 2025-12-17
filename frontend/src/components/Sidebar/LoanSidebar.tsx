@@ -35,18 +35,36 @@ const LOAN_PURPOSES = [
 
 interface LoanSidebarProps {
   onSalarySlipUploaded?: () => void;
+  activeTab?: "calculator" | "upload";
+  onTabChange?: (tab: "calculator" | "upload") => void;
+  showUpload?: boolean;
+  canDownloadSanction?: boolean;
 }
 
-const LoanSidebar = ({ onSalarySlipUploaded }: LoanSidebarProps) => {
+const LoanSidebar = ({
+  onSalarySlipUploaded,
+  activeTab,
+  onTabChange,
+  showUpload = true,
+  canDownloadSanction = true,
+}: LoanSidebarProps) => {
   const {
     phone,
     tenure: contextTenure,
     setTenure: setContextTenure,
+    purpose: contextPurpose,
+    setPurpose: setContextPurpose,
   } = useSession();
   const [loanAmount, setLoanAmount] = useState("500000");
   const [tenure, setTenure] = useState(contextTenure.toString());
   const [interestRate] = useState(14);
-  const [loanPurpose, setLoanPurpose] = useState("");
+  const [loanPurpose, setLoanPurpose] = useState(contextPurpose || "");
+
+  const handlePurposeChange = (val: string) => {
+    setLoanPurpose(val);
+    setContextPurpose(val);
+  };
+
 
   // Update context tenure when local tenure changes
   const handleTenureChange = (value: string) => {
@@ -86,18 +104,33 @@ const LoanSidebar = ({ onSalarySlipUploaded }: LoanSidebarProps) => {
     }
   };
 
+  const tabsValue = activeTab ?? "calculator";
+  const shouldShowUpload = showUpload || tabsValue === "upload";
+
   return (
     <div className="flex h-full w-full flex-col overflow-y-auto border-l border-border bg-background p-4 lg:w-80">
-      <Tabs defaultValue="calculator" className="flex-1">
-        <TabsList className="grid w-full grid-cols-2">
+      <Tabs
+        value={tabsValue}
+        onValueChange={(v) => onTabChange?.(v as "calculator" | "upload")}
+        className="flex-1"
+      >
+        <TabsList
+          className={
+            shouldShowUpload
+              ? "grid w-full grid-cols-2"
+              : "grid w-full grid-cols-1"
+          }
+        >
           <TabsTrigger value="calculator">
             <Calculator className="mr-2 h-4 w-4" />
             EMI
           </TabsTrigger>
-          <TabsTrigger value="upload">
-            <Upload className="mr-2 h-4 w-4" />
-            Upload
-          </TabsTrigger>
+          {shouldShowUpload && (
+            <TabsTrigger value="upload">
+              <Upload className="mr-2 h-4 w-4" />
+              Upload
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="calculator" className="mt-4 space-y-4">
@@ -130,7 +163,7 @@ const LoanSidebar = ({ onSalarySlipUploaded }: LoanSidebarProps) => {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="purpose">Loan Purpose</Label>
-                <Select value={loanPurpose} onValueChange={setLoanPurpose}>
+                <Select value={loanPurpose} onValueChange={handlePurposeChange}>
                   <SelectTrigger>
                     <Target className="mr-2 h-4 w-4 text-muted-foreground" />
                     <SelectValue placeholder="Select purpose" />
@@ -180,20 +213,22 @@ const LoanSidebar = ({ onSalarySlipUploaded }: LoanSidebarProps) => {
           </Card>
         </TabsContent>
 
-        <TabsContent value="upload" className="mt-4 space-y-4">
-          <FileUploader onUploadSuccess={() => onSalarySlipUploaded?.()} />
+        {shouldShowUpload && (
+          <TabsContent value="upload" className="mt-4 space-y-4">
+            <FileUploader onUploadSuccess={() => onSalarySlipUploaded?.()} />
 
-          {phone && (
-            <Button
-              variant="outline"
-              onClick={handleDownloadSanction}
-              className="w-full"
-            >
-              <FileDown className="mr-2 h-4 w-4" />
-              Download Sanction Letter
-            </Button>
-          )}
-        </TabsContent>
+            {phone && canDownloadSanction && (
+              <Button
+                variant="outline"
+                onClick={handleDownloadSanction}
+                className="w-full"
+              >
+                <FileDown className="mr-2 h-4 w-4" />
+                Download Sanction Letter
+              </Button>
+            )}
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

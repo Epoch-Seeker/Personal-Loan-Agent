@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  Calculator,
-  FileText,
-  CreditCard,
-  HelpCircle,
-  Gift,
-  Target,
-} from "lucide-react";
+import { CreditCard, HelpCircle, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -15,13 +8,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import HelpModal from "@/components/ui/HelpModal";
-import {
-  Dialog,
-  DialogContent,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-
 
 interface QuickActionsProps {
   onAction: (message: string) => void;
@@ -37,19 +23,6 @@ const LOAN_PURPOSES = [
   { value: "education", label: "Education", emoji: "📚" },
   { value: "business", label: "Business", emoji: "💼" },
   { value: "other", label: "Other", emoji: "📋" },
-];
-
-const actions = [
-  {
-    icon: Gift,
-    label: "Check Offers",
-    message: "Show me my pre-approved loan offers",
-  },
-  {
-    icon: FileText,
-    label: "Upload Documents",
-    message: "I want to upload my salary slip",
-  }, 
 ];
 
 const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {
@@ -68,13 +41,12 @@ const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {
 
   return (
     <div className="space-y-4 p-4">
-      {/* Loan Purpose Selector */}
-      <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
-        <div className="flex items-center gap-2 mb-3">
+      <div className="lb-surface p-4">
+        <div className="mb-3 flex items-center gap-2">
           <Target className="h-5 w-5 text-primary" />
           <span className="font-medium">What do you need the loan for?</span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-3 sm:flex-row">
           <Select value={selectedPurpose} onValueChange={setSelectedPurpose}>
             <SelectTrigger className="flex-1">
               <SelectValue placeholder="Select loan purpose" />
@@ -90,63 +62,21 @@ const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            onClick={handleApplyWithPurpose}
-            disabled={disabled}
-            className="shrink-0"
-          >
-            <CreditCard className="mr-2 h-4 w-4" />
-            Apply Now
-          </Button>
-        </div>
-      </div>
-
-      {/* Quick Action Buttons */}
-      <div className="grid grid-cols-3 gap-3">
-        {/* Existing chat-based actions */}
-        {actions.map(({ icon: Icon, label, message }) => (
-          <Button
-            key={label}
-            variant="outline"
-            onClick={() => onAction(message)}
-            disabled={disabled}
-            className="flex h-auto flex-col gap-2 py-4"
-          >
-            <Icon className="h-5 w-5" />
-            <span className="text-sm">{label}</span>
-          </Button>
-        ))}
-
-        {/* HELP BUTTON (Modal-based) */}
-        <Dialog>
-          <DialogTrigger asChild>
+          <div className="flex gap-2">
+            <Button onClick={handleApplyWithPurpose} disabled={disabled}>
+              <CreditCard className="mr-2 h-4 w-4" />
+              Start
+            </Button>
             <Button
               variant="outline"
+              onClick={() => onAction("What can you help me with?")}
               disabled={disabled}
-              className="flex h-auto flex-col gap-2 py-4"
             >
-              <HelpCircle className="h-5 w-5" />
-              <span className="text-sm">Help</span>
+              <HelpCircle className="mr-2 h-4 w-4" />
+              Help
             </Button>
-          </DialogTrigger>
-
-          <DialogContent className="max-h-[80vh] overflow-y-auto">
-            <HelpModal />
-          </DialogContent>
-        </Dialog>
-      </div>
-
-
-      {/* Promotional Banner */}
-      <div className="rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 p-4 text-white">
-        <div className="flex items-center gap-2 mb-1">
-          <Calculator className="h-5 w-5" />
-          <span className="font-semibold">Special Offer!</span>
+          </div>
         </div>
-        <p className="text-sm opacity-90">
-          Get instant approval with zero paperwork. Pre-approved limits up to
-          ₹10L at 14% p.a.
-        </p>
       </div>
     </div>
   );

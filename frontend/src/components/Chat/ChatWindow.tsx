@@ -4,13 +4,15 @@ import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MessageCircle } from 'lucide-react';
+import type { ActionType } from './ActionButton';
 
 interface ChatWindowProps {
   messages: Message[];
   isLoading: boolean;
+  onAction?: (action: ActionType) => void;
 }
 
-const ChatWindow = ({ messages, isLoading }: ChatWindowProps) => {
+const ChatWindow = ({ messages, isLoading, onAction }: ChatWindowProps) => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,7 +39,7 @@ const ChatWindow = ({ messages, isLoading }: ChatWindowProps) => {
     <ScrollArea className="flex-1">
       <div className="flex flex-col">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble key={message.id} message={message} onAction={onAction} />
         ))}
         {isLoading && <TypingIndicator />}
         <div ref={bottomRef} />

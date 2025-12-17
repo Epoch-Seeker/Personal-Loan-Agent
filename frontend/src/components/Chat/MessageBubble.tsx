@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { Message } from "@/hooks/useChat";
-import { User, Bot, FileDown } from "lucide-react";
+import { FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KYCDetailsCard from "./KYCDetailsCard";
 import LoanOfferCard from "./LoanOfferCard";
@@ -9,9 +9,15 @@ import EligibilityCard from "./EligibilityCard";
 import LoanSummaryCard from "./LoanSummaryCard";
 import ApprovalCard from "./ApprovalCard";
 import RejectionCard from "./RejectionCard";
+import ActionButton, {
+  parseActionMarkers,
+  stripActionMarkers,
+  ActionType,
+} from "./ActionButton";
 
 interface MessageBubbleProps {
   message: Message;
+  onAction?: (action: ActionType) => void;
 }
 
 // Helper to extract PDF download links from markdown
@@ -129,7 +135,7 @@ const parseStructuredContent = (content: string) => {
   return null;
 };
 
-const MessageBubble = ({ message }: MessageBubbleProps) => {
+const MessageBubble = ({ message, onAction }: MessageBubbleProps) => {
   const isUser = message.role === "user";
 
   // Parse for structured content in assistant messages
@@ -140,11 +146,15 @@ const MessageBubble = ({ message }: MessageBubbleProps) => {
   // Get the text content to display (without the structured tags)
   const displayContent = structuredContent?.remainingContent || message.content;
 
+  // Parse action buttons from display content
+  const actions = !isUser ? parseActionMarkers(displayContent) : [];
+  const contentWithoutActions = !isUser ? stripActionMarkers(displayContent) : displayContent;
+
   // Extract PDF links for download buttons, but only from the display content (not from structured tags)
   // Also skip if structured content is an approval (which has its own download button)
   const pdfLinks =
     !isUser && structuredContent?.type !== "approval"
-      ? extractPdfLinks(displayContent)
+      ? extractPdfLinks(contentWithoutActions)
       : [];
 
   const renderStructuredCard = () => {
@@ -170,24 +180,15 @@ const MessageBubble = ({ message }: MessageBubbleProps) => {
 
   return (
     <div
-      className={cn("flex items-start gap-3 p-4", isUser && "flex-row-reverse")}
+      className={cn(
+        "flex w-full px-4 py-2",
+        isUser ? "justify-end" : "justify-start"
+      )}
     >
       <div
         className={cn(
-          "flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
-          isUser ? "bg-secondary" : "bg-primary"
-        )}
-      >
-        {isUser ? (
-          <User className="h-5 w-5 text-secondary-foreground" />
-        ) : (
-          <Bot className="h-5 w-5 text-primary-foreground" />
-        )}
-      </div>
-      <div
-        className={cn(
-          "max-w-[80%] space-y-3",
-          isUser && "flex flex-col items-end"
+          "flex flex-col max-w-[85%] space-y-2",
+          isUser && "items-end"
         )}
       >
         {/* Structured Card (if any) */}
@@ -199,10 +200,10 @@ const MessageBubble = ({ message }: MessageBubbleProps) => {
         {displayContent && (
           <div
             className={cn(
-              "rounded-2xl px-4 py-3 shadow-sm",
+              "group rounded-2xl px-4 py-3",
               isUser
                 ? "bg-primary text-primary-foreground"
-                : "bg-card text-card-foreground"
+                : "border border-border bg-card text-card-foreground"
             )}
           >
             <div className="prose prose-sm max-w-none dark:prose-invert">
@@ -221,7 +222,7 @@ const MessageBubble = ({ message }: MessageBubbleProps) => {
                   ),
                 }}
               >
-                {displayContent}
+                {contentWithoutActions}
               </ReactMarkdown>
             </div>
 
@@ -233,7 +234,7 @@ const MessageBubble = ({ message }: MessageBubbleProps) => {
                     key={index}
                     variant="outline"
                     size="sm"
-                    className="w-full bg-primary/10 hover:bg-primary/20 border-primary/30"
+                    className="w-full"
                     onClick={() => window.open(link.url, "_blank")}
                   >
                     <FileDown className="mr-2 h-4 w-4" />
@@ -243,9 +244,23 @@ const MessageBubble = ({ message }: MessageBubbleProps) => {
               </div>
             )}
 
+            {/* Action Buttons */}
+            {actions.length > 0 && onAction && (
+              <div className="mt-3 pt-3 border-t border-current/10 flex flex-wrap gap-2">
+                {actions.map((action, index) => (
+                  <ActionButton
+                    key={index}
+                    action={action.type}
+                    label={action.label}
+                    onClick={onAction}
+                  />
+                ))}
+              </div>
+            )}
+
             <p
               className={cn(
-                "mt-2 text-xs",
+                "mt-2 text-xs opacity-0 transition-opacity group-hover:opacity-100",
                 isUser ? "text-primary-foreground/70" : "text-muted-foreground"
               )}
             >
